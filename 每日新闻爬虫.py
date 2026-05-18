@@ -6,6 +6,7 @@ import requests
 import json
 from datetime import datetime
 import time
+import re
 
 class NewsCrawler:
     def __init__(self):
@@ -22,10 +23,12 @@ class NewsCrawler:
         news_list = []
         
         try:
+            import sys
+            sys.path.insert(0, r'd:\应用工具-python代码\deps')
             import akshare as ak
             
             # 获取财经新闻
-            news_df = ak.stock_news_em(symbol="300059")
+            news_df = ak.stock_news_em(symbol="300059")  # 东方财富股票新闻
             
             if news_df is not None and len(news_df) > 0:
                 for _, row in news_df.head(10).iterrows():
@@ -62,11 +65,80 @@ class NewsCrawler:
         return news_list
 
     def get_social_news(self):
-        """获取社会新闻"""
+        """获取社会新闻 - 首选澎湃，然后人民网/新华网，备用新浪/腾讯"""
         news_list = []
         
+        # 方法1：使用澎湃新闻API（首选）
         try:
-            url = "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2512&k=&num=20&page=1"
+            url = "https://cache.thepaper.cn/contentapi/wwwIndex/rightSidebar"
+            response = self.session.get(url, timeout=15)
+            data = response.json()
+            
+            if data.get('data', {}).get('hotNews1'):
+                items = data['data']['hotNews1']
+                for item in items[:10]:
+                    title = item.get('name', '').strip()
+                    if title and len(title) > 5:
+                        news_list.append({
+                            'title': title,
+                            'source': '澎湃新闻',
+                            'link': f"https://www.thepaper.cn/newsDetail_forward_{item.get('id', '')}",
+                            'category': '社会'
+                        })
+                if news_list:
+                    return news_list
+        except Exception as e:
+            print(f"澎湃新闻失败: {e}")
+        
+        # 方法2：使用人民网新闻
+        try:
+            url = "http://www.people.com.cn/rss/politics.xml"
+            response = self.session.get(url, timeout=15)
+            response.encoding = 'utf-8'
+            
+            titles = re.findall(r'<title><!$$CDATA\[(.*?)$$\]></title>', response.text)
+            links = re.findall(r'<link>(.*?)</link>', response.text)
+            
+            if titles:
+                for i, title in enumerate(titles[:10]):
+                    if title and len(title) > 5 and '人民网' not in title:
+                        news_list.append({
+                            'title': title,
+                            'source': '人民网',
+                            'link': links[i] if i < len(links) else '',
+                            'category': '社会'
+                        })
+                if news_list:
+                    return news_list
+        except Exception as e:
+            print(f"人民网失败: {e}")
+        
+        # 方法3：使用新华网新闻
+        try:
+            url = "http://www.news.cn/fortune/rss.xml"
+            response = self.session.get(url, timeout=15)
+            response.encoding = 'utf-8'
+            
+            titles = re.findall(r'<title><!$$CDATA\[(.*?)$$\]></title>', response.text)
+            links = re.findall(r'<link>(.*?)</link>', response.text)
+            
+            if titles:
+                for i, title in enumerate(titles[:10]):
+                    if title and len(title) > 5 and '新华网' not in title:
+                        news_list.append({
+                            'title': title,
+                            'source': '新华网',
+                            'link': links[i] if i < len(links) else '',
+                            'category': '社会'
+                        })
+                if news_list:
+                    return news_list
+        except Exception as e:
+            print(f"新华网失败: {e}")
+        
+        # 方法4：使用新浪新闻API（热点聚合备用）
+        try:
+            url = "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2510&k=&num=20&page=1"
             response = self.session.get(url, timeout=15)
             data = response.json()
             
@@ -81,8 +153,32 @@ class NewsCrawler:
                             'link': item.get('url', ''),
                             'category': '社会'
                         })
+                if news_list:
+                    return news_list
         except Exception as e:
-            print(f"社会新闻失败: {e}")
+            print(f"新浪新闻失败: {e}")
+        
+        # 方法5：使用腾讯新闻API（热点聚合备用）
+        try:
+            url = "https://r.inews.qq.com/getSubNewsListData?scene=2&sub_id=27&newsid=&news_top_num=0&refer=&ext=&offset=0&limit=20"
+            response = self.session.get(url, timeout=15)
+            data = response.json()
+            
+            if data.get('ret') == 0:
+                items = data.get('data', {}).get('newslist', [])
+                for item in items[:10]:
+                    title = item.get('title', '').strip()
+                    if title and len(title) > 5:
+                        news_list.append({
+                            'title': title,
+                            'source': '腾讯新闻',
+                            'link': item.get('url', ''),
+                            'category': '社会'
+                        })
+                if news_list:
+                    return news_list
+        except Exception as e:
+            print(f"腾讯新闻失败: {e}")
 
         return news_list
 
@@ -102,7 +198,7 @@ class NewsCrawler:
         else:
             content += "暂无数据\n"
         
-        content += "\n🌍 **社会新闻**\n"
+        content += "\n🔥 **热点新闻**\n"
         if social_news:
             for i, news in enumerate(social_news[:8], 1):
                 content += f"{i}. {news['title']}\n"
@@ -111,7 +207,7 @@ class NewsCrawler:
         else:
             content += "暂无数据\n"
         
-        content += f"\n📊 数据来源：新浪财经、东方财富\n"
+        content += f"\n📊 数据来源：澎湃新闻、人民网、新华网、新浪新闻、腾讯新闻\n"
         content += f"⏰ 推送时间：{datetime.now().strftime('%H:%M')}"
         
         return content
