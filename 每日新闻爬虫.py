@@ -4,9 +4,8 @@
 """
 import requests
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
-import re
 
 class NewsCrawler:
     def __init__(self):
@@ -17,58 +16,79 @@ class NewsCrawler:
         }
         self.session = requests.Session()
         self.session.headers.update(self.headers)
+        # 获取前一天的日期
+        self.yesterday = datetime.now() - timedelta(days=1)
+        self.yesterday_str = self.yesterday.strftime('%Y-%m-%d')
+        self.yesterday_date = self.yesterday.strftime('%Y%m%d')
+        self.yesterday_display = self.yesterday.strftime('%Y年%m月%d日')
 
     def get_finance_news(self):
-        """获取财经新闻 - 使用AKshare"""
+        """获取财经新闻 - 使用新浪财经API"""
         news_list = []
         
+        # 方法1：使用新浪财经API获取财经新闻
         try:
-            import sys
-            sys.path.insert(0, r'd:\应用工具-python代码\deps')
-            import akshare as ak
+            url = "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2516&k=&num=50&page=1"
+            response = self.session.get(url, timeout=15)
+            data = response.json()
             
-            # 获取财经新闻
-            news_df = ak.stock_news_em(symbol="300059")  # 东方财富股票新闻
-            
-            if news_df is not None and len(news_df) > 0:
-                for _, row in news_df.head(10).iterrows():
-                    news_list.append({
-                        'title': row.get('新闻标题', ''),
-                        'source': row.get('文章来源', '东方财富'),
-                        'link': row.get('新闻链接', ''),
-                        'category': '财经'
-                    })
+            if data.get('code') == 0:
+                items = data.get('result', {}).get('data', [])
+                for item in items:
+                    title = item.get('title', '').strip()
+                    intro = item.get('intro', '')
+                    ctime = item.get('ctime', '')
+                    
+                    # 过滤前一天的新闻
+                    if ctime:
+                        try:
+                            news_date = datetime.fromtimestamp(int(ctime)).strftime('%Y-%m-%d')
+                            if news_date != self.yesterday_str:
+                                continue
+                        except:
+                            pass
+                    
+                    if title and len(title) > 5:
+                        news_list.append({
+                            'title': title,
+                            'source': '新浪财经',
+                            'link': item.get('url', ''),
+                            'category': '财经',
+                            'intro': intro
+                        })
+                    
+                    if len(news_list) >= 10:
+                        break
         except Exception as e:
-            print(f"AKshare财经新闻失败: {e}")
+            print(f"新浪财经财经新闻失败: {e}")
         
-        # 备用方案：使用新浪财经RSS
+        # 备用方案：使用东方财富新闻
         if len(news_list) == 0:
             try:
-                url = "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2516&k=&num=20&page=1"
-                response = self.session.get(url, timeout=15)
-                data = response.json()
+                import sys
+                sys.path.insert(0, r'd:\应用工具-python代码\deps')
+                import akshare as ak
                 
-                if data.get('code') == 0:
-                    items = data.get('result', {}).get('data', [])
-                    for item in items[:10]:
-                        title = item.get('title', '').strip()
-                        if title and len(title) > 5:
-                            news_list.append({
-                                'title': title,
-                                'source': '新浪财经',
-                                'link': item.get('url', ''),
-                                'category': '财经'
-                            })
+                news_df = ak.stock_news_em(symbol="300059")
+                
+                if news_df is not None and len(news_df) > 0:
+                    for _, row in news_df.head(10).iterrows():
+                        news_list.append({
+                            'title': row.get('新闻标题', ''),
+                            'source': row.get('文章来源', '东方财富'),
+                            'link': row.get('新闻链接', ''),
+                            'category': '财经'
+                        })
             except Exception as e:
-                print(f"新浪财经备用失败: {e}")
+                print(f"AKshare财经新闻失败: {e}")
 
         return news_list
 
     def get_social_news(self):
-        """获取社会新闻 - 首选澎湃，然后人民网/新华网，备用新浪/腾讯"""
+        """获取社会新闻 - 首选澎湃/新浪，备用腾讯"""
         news_list = []
         
-        # 方法1：使用澎湃新闻API（首选）
+        # 方法1：使用澎湃新闻API获取社会新闻
         try:
             url = "https://cache.thepaper.cn/contentapi/wwwIndex/rightSidebar"
             response = self.session.get(url, timeout=15)
@@ -76,76 +96,61 @@ class NewsCrawler:
             
             if data.get('data', {}).get('hotNews1'):
                 items = data['data']['hotNews1']
-                for item in items[:10]:
+                for item in items:
                     title = item.get('name', '').strip()
+                    pub_time = item.get('pubTimeLong', '')
+                    
+                    # 过滤前一天的新闻
+                    if pub_time:
+                        try:
+                            news_date = datetime.fromtimestamp(int(pub_time) / 1000).strftime('%Y-%m-%d')
+                            if news_date != self.yesterday_str:
+                                continue
+                        except:
+                            pass
+                    
+                    # 排除财经、股票相关标题
                     if title and len(title) > 5:
+                        exclude_keywords = ['股市', '股票', '基金', '理财', '银行', '保险', '经济', '金融', 'A股', '沪指', '深证', '创业板', '科创板', '北交所', '涨停', '跌停', '股价', '市值', '分红', '财报']
+                        if any(keyword in title for keyword in exclude_keywords):
+                            continue
+                            
                         news_list.append({
                             'title': title,
                             'source': '澎湃新闻',
                             'link': f"https://www.thepaper.cn/newsDetail_forward_{item.get('id', '')}",
                             'category': '社会'
                         })
+                    
+                    if len(news_list) >= 10:
+                        break
+                        
                 if news_list:
                     return news_list
         except Exception as e:
             print(f"澎湃新闻失败: {e}")
         
-        # 方法2：使用人民网新闻
+        # 方法2：使用新浪社会新闻API
         try:
-            url = "http://www.people.com.cn/rss/politics.xml"
-            response = self.session.get(url, timeout=15)
-            response.encoding = 'utf-8'
-            
-            titles = re.findall(r'<title><!$$CDATA\[(.*?)$$\]></title>', response.text)
-            links = re.findall(r'<link>(.*?)</link>', response.text)
-            
-            if titles:
-                for i, title in enumerate(titles[:10]):
-                    if title and len(title) > 5 and '人民网' not in title:
-                        news_list.append({
-                            'title': title,
-                            'source': '人民网',
-                            'link': links[i] if i < len(links) else '',
-                            'category': '社会'
-                        })
-                if news_list:
-                    return news_list
-        except Exception as e:
-            print(f"人民网失败: {e}")
-        
-        # 方法3：使用新华网新闻
-        try:
-            url = "http://www.news.cn/fortune/rss.xml"
-            response = self.session.get(url, timeout=15)
-            response.encoding = 'utf-8'
-            
-            titles = re.findall(r'<title><!$$CDATA\[(.*?)$$\]></title>', response.text)
-            links = re.findall(r'<link>(.*?)</link>', response.text)
-            
-            if titles:
-                for i, title in enumerate(titles[:10]):
-                    if title and len(title) > 5 and '新华网' not in title:
-                        news_list.append({
-                            'title': title,
-                            'source': '新华网',
-                            'link': links[i] if i < len(links) else '',
-                            'category': '社会'
-                        })
-                if news_list:
-                    return news_list
-        except Exception as e:
-            print(f"新华网失败: {e}")
-        
-        # 方法4：使用新浪新闻API（热点聚合备用）
-        try:
-            url = "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2510&k=&num=20&page=1"
+            url = "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2510&k=&num=50&page=1"
             response = self.session.get(url, timeout=15)
             data = response.json()
             
             if data.get('code') == 0:
                 items = data.get('result', {}).get('data', [])
-                for item in items[:10]:
+                for item in items:
                     title = item.get('title', '').strip()
+                    ctime = item.get('ctime', '')
+                    
+                    # 过滤前一天的新闻
+                    if ctime:
+                        try:
+                            news_date = datetime.fromtimestamp(int(ctime)).strftime('%Y-%m-%d')
+                            if news_date != self.yesterday_str:
+                                continue
+                        except:
+                            pass
+                    
                     if title and len(title) > 5:
                         news_list.append({
                             'title': title,
@@ -153,21 +158,36 @@ class NewsCrawler:
                             'link': item.get('url', ''),
                             'category': '社会'
                         })
+                    
+                    if len(news_list) >= 10:
+                        break
+                        
                 if news_list:
                     return news_list
         except Exception as e:
             print(f"新浪新闻失败: {e}")
         
-        # 方法5：使用腾讯新闻API（热点聚合备用）
+        # 方法3：使用腾讯新闻API
         try:
-            url = "https://r.inews.qq.com/getSubNewsListData?scene=2&sub_id=27&newsid=&news_top_num=0&refer=&ext=&offset=0&limit=20"
+            url = "https://r.inews.qq.com/getSubNewsListData?scene=2&sub_id=27&newsid=&news_top_num=0&refer=&ext=&offset=0&limit=50"
             response = self.session.get(url, timeout=15)
             data = response.json()
             
             if data.get('ret') == 0:
                 items = data.get('data', {}).get('newslist', [])
-                for item in items[:10]:
+                for item in items:
                     title = item.get('title', '').strip()
+                    timestamp = item.get('timestamp', '')
+                    
+                    # 过滤前一天的新闻
+                    if timestamp:
+                        try:
+                            news_date = datetime.fromtimestamp(int(timestamp)).strftime('%Y-%m-%d')
+                            if news_date != self.yesterday_str:
+                                continue
+                        except:
+                            pass
+                    
                     if title and len(title) > 5:
                         news_list.append({
                             'title': title,
@@ -175,6 +195,10 @@ class NewsCrawler:
                             'link': item.get('url', ''),
                             'category': '社会'
                         })
+                    
+                    if len(news_list) >= 10:
+                        break
+                        
                 if news_list:
                     return news_list
         except Exception as e:
@@ -184,9 +208,7 @@ class NewsCrawler:
 
     def format_news_content(self, finance_news, social_news):
         """格式化新闻内容"""
-        today = datetime.now().strftime('%Y年%m月%d日')
-        
-        content = f"📰 **每日新闻速递** ({today})\n\n"
+        content = f" **每日新闻速递** ({self.yesterday_display})\n\n"
         
         # 财经新闻
         content += "💰 **财经新闻**\n"
@@ -198,16 +220,16 @@ class NewsCrawler:
         else:
             content += "暂无数据\n"
         
-        content += "\n🔥 **热点新闻**\n"
+        content += "\n **社会新闻**\n"
         if social_news:
             for i, news in enumerate(social_news[:8], 1):
                 content += f"{i}. {news['title']}\n"
                 if news['link']:
-                    content += f"   🔗 {news['link']}\n"
+                    content += f"    {news['link']}\n"
         else:
             content += "暂无数据\n"
         
-        content += f"\n📊 数据来源：澎湃新闻、人民网、新华网、新浪新闻、腾讯新闻\n"
+        content += f"\n 数据来源：澎湃新闻、新浪新闻、腾讯新闻\n"
         content += f"⏰ 推送时间：{datetime.now().strftime('%H:%M')}"
         
         return content
@@ -260,6 +282,7 @@ def main():
     print("开始爬取新闻...")
     
     crawler = NewsCrawler()
+    print(f"目标日期: {crawler.yesterday_display}")
     
     finance_news = crawler.get_finance_news()
     social_news = crawler.get_social_news()
