@@ -94,33 +94,44 @@ class NewsCrawler:
             response = self.session.get(url, timeout=15)
             data = response.json()
             
-            if data.get('data', {}).get('hotNews1'):
-                items = data['data']['hotNews1']
-                for item in items:
-                    title = item.get('name', '').strip()
-                    pub_time = item.get('pubTimeLong', '')
-                    
-                    # 过滤前一天的新闻
-                    if pub_time:
-                        try:
-                            news_date = datetime.fromtimestamp(int(pub_time) / 1000).strftime('%Y-%m-%d')
-                            if news_date != self.yesterday_str:
-                                continue
-                        except:
-                            pass
-                    
-                    # 排除财经、股票相关标题
-                    if title and len(title) > 5:
-                        exclude_keywords = ['股市', '股票', '基金', '理财', '银行', '保险', '经济', '金融', 'A股', '沪指', '深证', '创业板', '科创板', '北交所', '涨停', '跌停', '股价', '市值', '分红', '财报']
-                        if any(keyword in title for keyword in exclude_keywords):
-                            continue
-                            
+            # 修复：字段名是 hotNews 不是 hotNews1
+            hot_news = data.get('data', {}).get('hotNews', [])
+            if hot_news:
+                for item in hot_news:
+                    # 澎湃新闻的 hotNews 是字符串列表，不是对象列表
+                    if isinstance(item, str):
+                        title = item.strip()
                         news_list.append({
                             'title': title,
                             'source': '澎湃新闻',
-                            'link': f"https://www.thepaper.cn/newsDetail_forward_{item.get('id', '')}",
+                            'link': '',
                             'category': '社会'
                         })
+                    elif isinstance(item, dict):
+                        title = item.get('name', '').strip() or item.get('title', '').strip()
+                        pub_time = item.get('pubTimeLong', '')
+                        
+                        # 过滤前一天的新闻
+                        if pub_time:
+                            try:
+                                news_date = datetime.fromtimestamp(int(pub_time) / 1000).strftime('%Y-%m-%d')
+                                if news_date != self.yesterday_str:
+                                    continue
+                            except:
+                                pass
+                        
+                        # 排除财经、股票相关标题
+                        if title and len(title) > 5:
+                            exclude_keywords = ['股市', '股票', '基金', '理财', '银行', '保险', '经济', '金融', 'A股', '沪指', '深证', '创业板', '科创板', '北交所', '涨停', '跌停', '股价', '市值', '分红', '财报']
+                            if any(keyword in title for keyword in exclude_keywords):
+                                continue
+                                
+                            news_list.append({
+                                'title': title,
+                                'source': '澎湃新闻',
+                                'link': f"https://www.thepaper.cn/newsDetail_forward_{item.get('id', '')}",
+                                'category': '社会'
+                            })
                     
                     if len(news_list) >= 10:
                         break
@@ -136,7 +147,9 @@ class NewsCrawler:
             response = self.session.get(url, timeout=15)
             data = response.json()
             
-            if data.get('code') == 0:
+            # 修复：新浪返回结构是 result.status.code
+            status_code = data.get('result', {}).get('status', {}).get('code')
+            if status_code == 0:
                 items = data.get('result', {}).get('data', [])
                 for item in items:
                     title = item.get('title', '').strip()
@@ -167,22 +180,22 @@ class NewsCrawler:
         except Exception as e:
             print(f"新浪新闻失败: {e}")
         
-        # 方法3：使用腾讯新闻API
+        # 方法3：使用新浪国内新闻API（备用）
         try:
-            url = "https://r.inews.qq.com/getSubNewsListData?scene=2&sub_id=27&newsid=&news_top_num=0&refer=&ext=&offset=0&limit=50"
+            url = "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2509&k=&num=50&page=1"
             response = self.session.get(url, timeout=15)
             data = response.json()
             
-            if data.get('ret') == 0:
-                items = data.get('data', {}).get('newslist', [])
+            status_code = data.get('result', {}).get('status', {}).get('code')
+            if status_code == 0:
+                items = data.get('result', {}).get('data', [])
                 for item in items:
                     title = item.get('title', '').strip()
-                    timestamp = item.get('timestamp', '')
+                    ctime = item.get('ctime', '')
                     
-                    # 过滤前一天的新闻
-                    if timestamp:
+                    if ctime:
                         try:
-                            news_date = datetime.fromtimestamp(int(timestamp)).strftime('%Y-%m-%d')
+                            news_date = datetime.fromtimestamp(int(ctime)).strftime('%Y-%m-%d')
                             if news_date != self.yesterday_str:
                                 continue
                         except:
@@ -191,7 +204,7 @@ class NewsCrawler:
                     if title and len(title) > 5:
                         news_list.append({
                             'title': title,
-                            'source': '腾讯新闻',
+                            'source': '新浪国内',
                             'link': item.get('url', ''),
                             'category': '社会'
                         })
@@ -202,7 +215,7 @@ class NewsCrawler:
                 if news_list:
                     return news_list
         except Exception as e:
-            print(f"腾讯新闻失败: {e}")
+            print(f"新浪国内新闻失败: {e}")
 
         return news_list
 
